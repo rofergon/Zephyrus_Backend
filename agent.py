@@ -20,10 +20,24 @@ class Agent:
         self.conversation_history: List[Dict] = []
         self.max_retries = 3
         self.max_compilation_attempts = 5
+        # Add persistent context
+        self.current_contract_context = {
+            "file": None,
+            "code": None,
+            "file_system": {}
+        }
 
     async def process_message(self, message: str, context: Dict) -> AsyncGenerator[Dict, None]:
         """Procesa un mensaje del usuario y genera respuestas."""
         try:
+            # Update contract context if provided in the message
+            if context.get("currentFile"):
+                self.current_contract_context["file"] = context["currentFile"]
+            if context.get("currentCode"):
+                self.current_contract_context["code"] = context["currentCode"]
+            if context.get("fileSystem"):
+                self.current_contract_context["file_system"] = context["fileSystem"]
+
             # Añadir el mensaje del usuario al historial
             self.conversation_history.append({
                 "role": "user",
@@ -39,13 +53,22 @@ Your task is to help users write, edit, and debug smart contracts. You can:
 4. Fix compilation errors
 5. Manage files and directories
 
-When editing contracts, always ensure they follow Solidity best practices and security standards.
+Important guidelines for code handling:
+- When asked for suggestions or ideas, prefix them with "Suggestion:" or "Idea:" and show example code in ```solidity blocks
+- Only CREATE or EDIT contracts when explicitly asked to do so
+- When showing example code as part of a suggestion, wrap it in ```solidity blocks
+- When actually creating or editing a contract, use ```solidity blocks and be explicit about the action
+- Always include SPDX-License-Identifier and pragma statements in new contracts
+- When editing contracts, always ensure they follow Solidity best practices and security standards
+- Never delete or completely replace an existing contract unless explicitly requested
+- Always preserve the existing contract structure and functionality when making edits
+- If you need to make significant changes, first explain what you plan to do and wait for approval
+
 If you encounter compilation errors, analyze them and make the necessary fixes."""
 
-            # Preparar el contexto actual
-            current_file = context.get("currentFile")
-            current_code = context.get("currentCode")
-            file_system = context.get("fileSystem", {})
+            # Preparar el contexto actual usando el estado persistente
+            current_file = self.current_contract_context["file"]
+            current_code = self.current_contract_context["code"]
 
             # Construir los mensajes para Claude
             messages = [*self.conversation_history]
@@ -95,6 +118,9 @@ If you encounter compilation errors, analyze them and make the necessary fixes."
                         current_content = await self.file_manager.read_file(action["path"])
                         new_content = self.apply_edit(current_content, action["edit"])
                         await self.file_manager.write_file(action["path"], new_content)
+                        # Update the contract context with the new content
+                        if action["path"] == self.current_contract_context["file"]:
+                            self.current_contract_context["code"] = new_content
                         yield {
                             "type": "code_edit",
                             "content": new_content,
@@ -150,25 +176,62 @@ If you encounter compilation errors, analyze them and make the necessary fixes."
         """Analiza la respuesta de Claude para extraer acciones."""
         actions = []
         lines = response.split('\n')
-        current_action = None
+        in_code_block = False
+        code_content = ""
+        is_suggestion_block = False
+        
+        # Si hay un contrato actual, cualquier código solidity debería ser una edición
+        is_editing_mode = self.current_contract_context["file"] is not None
 
-        for line in lines:
+        for i, line in enumerate(lines):
+            # Detectar si es una sugerencia antes del bloque de código
+            if not in_code_block and any(keyword in line.lower() for keyword in ["suggestion:", "idea:", "you could:", "consider:", "recommendation:", "proposal:"]):
+                is_suggestion_block = True
+                actions.append({
+                    "type": "message",
+                    "content": line.strip()
+                })
+                continue
+
+            # Detectar inicio de bloque de código
             if line.startswith("```solidity"):
-                current_action = {
-                    "type": "create_file",
-                    "path": f"contracts/Contract_{len(actions)}.sol",
-                    "content": ""
-                }
-            elif line.startswith("```") and current_action:
-                if current_action["content"]:
-                    actions.append(current_action)
-                current_action = None
-            elif current_action:
-                current_action["content"] += line + "\n"
+                in_code_block = True
+                code_content = ""
+                continue
+            # Detectar fin de bloque de código
+            elif line.startswith("```") and in_code_block:
+                in_code_block = False
+                if code_content.strip():
+                    # Si es un bloque de sugerencia, solo mostrar el código como mensaje
+                    if is_suggestion_block:
+                        actions.append({
+                            "type": "message",
+                            "content": f"Example code:\n```solidity\n{code_content.strip()}\n```"
+                        })
+                    # Si no es sugerencia y hay un contrato actual, editar
+                    elif is_editing_mode:
+                        actions.append({
+                            "type": "edit_file",
+                            "path": self.current_contract_context["file"],
+                            "edit": {"replace": code_content.strip()}
+                        })
+                    # Si no es sugerencia y no hay contrato actual, crear nuevo
+                    else:
+                        actions.append({
+                            "type": "create_file",
+                            "path": f"contracts/Contract_{len(actions)}.sol",
+                            "content": code_content.strip()
+                        })
+                is_suggestion_block = False
+                continue
+            # Acumular contenido del bloque de código
+            elif in_code_block:
+                code_content += line + "\n"
+            # Si la línea no es parte de un bloque de código y no está vacía
             elif line.strip():
                 actions.append({
                     "type": "message",
-                    "content": line
+                    "content": line.strip()
                 })
 
         return actions
