@@ -1,71 +1,71 @@
 # Smart Contract AI Assistant Backend
 
-Este es el backend para el asistente AI de contratos inteligentes. Proporciona una interfaz WebSocket para comunicarse con un agente AI que puede ayudar a escribir, editar y depurar contratos Solidity.
+This is the backend for the Smart Contract AI Assistant. It provides a WebSocket interface to communicate with an AI agent that can help write, edit, and debug Solidity contracts.
 
-## Características
+## Features
 
-- Integración con Claude AI de Anthropic para asistencia inteligente
-- Comunicación en tiempo real mediante WebSocket
-- Manejo de archivos y directorios
-- Compilación y validación de contratos Solidity
-- Corrección automática de errores de compilación
-- Sistema de caché de archivos para mejor rendimiento
-- Soporte para múltiples clientes simultáneos
-- Generación automática de IDs de cliente
+- Integration with Anthropic's Claude AI for intelligent assistance
+- Real-time communication via WebSocket
+- File and directory management
+- Solidity contract compilation and validation
+- Automatic compilation error correction
+- File caching system for better performance
+- Support for multiple simultaneous clients
+- Automatic client ID generation
 
-## Requisitos
+## Requirements
 
-- Python 3.8 o superior
-- Una clave API de Anthropic (Claude)
-- Solidity Compiler (solc) instalado en el sistema
+- Python 3.8 or higher
+- An Anthropic API key (Claude)
+- Solidity Compiler (solc) installed on the system
 
-## Instalación
+## Installation
 
-1. Clonar el repositorio:
+1. Clone the repository:
 ```bash
-git clone <url-del-repositorio>
-cd <nombre-del-directorio>
+git clone <repository-url>
+cd <directory-name>
 ```
 
-2. Crear un entorno virtual:
+2. Create a virtual environment:
 ```bash
-# En Windows
+# On Windows
 python -m venv venv
 .\venv\Scripts\activate
 
-# En Linux/Mac
+# On Linux/Mac
 python -m venv venv
 source venv/bin/activate
 ```
 
-3. Instalar dependencias:
+3. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-4. Configurar variables de entorno:
-- Copiar `.env.example` a `.env`
-- Agregar tu clave API de Anthropic en `ANTHROPIC_API_KEY`
-- Ajustar otras configuraciones según sea necesario
+4. Configure environment variables:
+- Copy `.env.example` to `.env`
+- Add your Anthropic API key in `ANTHROPIC_API_KEY`
+- Adjust other settings as needed
 
-## Uso
+## Usage
 
-1. Iniciar el servidor:
+1. Start the server:
 ```bash
 python main.py
 ```
 
-El servidor se iniciará en `http://localhost:8000` con dos endpoints WebSocket disponibles:
-- `ws://localhost:8000/ws/agent` - Conexión sin ID de cliente (se genera automáticamente)
-- `ws://localhost:8000/ws/agent/{client_id}` - Conexión con ID de cliente específico
+The server will start at `http://localhost:8000` with two WebSocket endpoints available:
+- `ws://localhost:8000/ws/agent` - Connection without client ID (automatically generated)
+- `ws://localhost:8000/ws/agent/{client_id}` - Connection with specific client ID
 
-### Ejemplo de conexión WebSocket
+### WebSocket Connection Example
 
 ```javascript
-// Conexión sin ID de cliente
+// Connection without client ID
 const ws = new WebSocket('ws://localhost:8000/ws/agent');
 
-// El servidor enviará un mensaje con el ID de cliente asignado
+// The server will send a message with the assigned client ID
 ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
     if (data.type === 'connection_established') {
@@ -73,36 +73,36 @@ ws.onmessage = (event) => {
     }
 };
 
-// Enviar un mensaje al agente
+// Send a message to the agent
 ws.send(JSON.stringify({
-    content: "Tu mensaje aquí",
+    content: "Your message here",
     context: {
         currentFile: "path/to/file.sol",
-        currentCode: "código actual",
+        currentCode: "current code",
         fileSystem: {}
     }
 }));
 ```
 
-## Estructura del Proyecto
+## Project Structure
 
 ```
 backend/
-├── main.py              # Servidor FastAPI principal
-├── agent.py             # Lógica del agente AI
-├── file_manager.py      # Manejo de archivos y directorios
-├── requirements.txt     # Dependencias del proyecto
-└── .env                # Variables de entorno (no incluido en git)
+├── main.py              # Main FastAPI server
+├── agent.py             # AI agent logic
+├── file_manager.py      # File and directory handling
+├── requirements.txt     # Project dependencies
+└── .env                # Environment variables (not included in git)
 ```
 
-## Respuestas del Servidor
+## Server Responses
 
-El servidor puede enviar diferentes tipos de mensajes:
+The server can send different types of messages:
 
 ```json
 {
     "type": "message|code_edit|file_create|file_delete|error|connection_established",
-    "content": "contenido de la respuesta",
+    "content": "response content",
     "metadata": {
         "path": "path/to/file",
         "language": "solidity"
@@ -110,20 +110,20 @@ El servidor puede enviar diferentes tipos de mensajes:
 }
 ```
 
-## Desarrollo
+## Development
 
-1. Para desarrollo local, asegúrate de tener el entorno virtual activado
-2. El servidor tiene hot-reload activado por defecto
-3. Los logs se muestran en la consola en tiempo real
+1. For local development, make sure you have the virtual environment activated
+2. The server has hot-reload enabled by default
+3. Logs are displayed in the console in real-time
 
-## Contribuir
+## Contributing
 
-1. Fork el repositorio
-2. Crea una rama para tu feature (`git checkout -b feature/AmazingFeature`)
-3. Commit tus cambios (`git commit -m 'Add some AmazingFeature'`)
-4. Push a la rama (`git push origin feature/AmazingFeature`)
-5. Abre un Pull Request
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
-## Licencia
+## License
 
-Este proyecto está bajo la Licencia MIT - ver el archivo [LICENSE](LICENSE) para más detalles. 
+This project is under the MIT License - see the [LICENSE](LICENSE) file for details. 
