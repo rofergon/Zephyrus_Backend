@@ -54,6 +54,7 @@ Your task is to help users write, edit, and debug smart contracts. You can:
 5. Manage files and directories
 
 Important guidelines for code handling:
+- ALWAYS use Solidity version 0.8.20 for all contracts (pragma solidity ^0.8.20;)
 - When asked for suggestions or ideas, prefix them with "Suggestion:" or "Idea:" and show example code in ```solidity blocks
 - Only CREATE or EDIT contracts when explicitly asked to do so
 - When showing example code as part of a suggestion, wrap it in ```solidity blocks
@@ -63,6 +64,17 @@ Important guidelines for code handling:
 - Never delete or completely replace an existing contract unless explicitly requested
 - Always preserve the existing contract structure and functionality when making edits
 - If you need to make significant changes, first explain what you plan to do and wait for approval
+- When explaining steps or processes, send each explanation as a separate message with a brief pause between them
+
+Contract Template Format:
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract ContractName {
+    // Contract code here
+}
+```
 
 If you encounter compilation errors, analyze them and make the necessary fixes."""
 
@@ -84,7 +96,7 @@ If you encounter compilation errors, analyze them and make the necessary fixes."
                 response = await self.anthropic.messages.create(
                     model="claude-3-sonnet-20240229",
                     max_tokens=4096,
-                    system=system_prompt,  # Sistema como parámetro de nivel superior
+                    system=system_prompt,
                     messages=messages,
                     temperature=0.7
                 )
@@ -96,6 +108,7 @@ If you encounter compilation errors, analyze them and make the necessary fixes."
                 # Procesar la respuesta
                 response_content = response.content[0].text
                 yield {"type": "message", "content": "Analyzing your request..."}
+                await asyncio.sleep(0.5)  # Pequeña pausa inicial
 
                 # Analizar la respuesta para acciones específicas
                 actions = self.parse_actions(response_content)
@@ -103,6 +116,7 @@ If you encounter compilation errors, analyze them and make the necessary fixes."
                 for action in actions:
                     if action["type"] == "create_file":
                         yield {"type": "message", "content": f"Creating file {action['path']}..."}
+                        await asyncio.sleep(0.3)  # Pausa antes de crear el archivo
                         await self.file_manager.write_file(action["path"], action["content"])
                         yield {
                             "type": "file_create",
@@ -112,22 +126,43 @@ If you encounter compilation errors, analyze them and make the necessary fixes."
                                 "language": "solidity"
                             }
                         }
+                        await asyncio.sleep(0.5)  # Pausa después de crear el archivo
 
                     elif action["type"] == "edit_file":
                         yield {"type": "message", "content": f"Editing file {action['path']}..."}
-                        current_content = await self.file_manager.read_file(action["path"])
-                        new_content = self.apply_edit(current_content, action["edit"])
-                        await self.file_manager.write_file(action["path"], new_content)
-                        # Update the contract context with the new content
-                        if action["path"] == self.current_contract_context["file"]:
-                            self.current_contract_context["code"] = new_content
-                        yield {
-                            "type": "code_edit",
-                            "content": new_content,
-                            "metadata": {
-                                "path": action["path"]
+                        await asyncio.sleep(0.3)
+                        
+                        try:
+                            # Leer el contenido actual del archivo
+                            current_content = await self.file_manager.read_file(action["path"])
+                            # Aplicar la edición
+                            new_content = self.apply_edit(current_content, action["edit"])
+                            # Escribir el nuevo contenido
+                            await self.file_manager.write_file(action["path"], new_content)
+                            
+                            # Actualizar el contexto si es el archivo actual
+                            if action["path"] == self.current_contract_context["file"]:
+                                self.current_contract_context["code"] = new_content
+                                logger.info(f"Updated context for file {action['path']}")
+                            
+                            # Enviar la actualización al cliente
+                            yield {
+                                "type": "code_edit",
+                                "content": new_content,
+                                "metadata": {
+                                    "path": action["path"],
+                                    "language": "solidity"
+                                }
                             }
-                        }
+                            
+                            await asyncio.sleep(0.5)
+                            
+                        except Exception as edit_error:
+                            logger.error(f"Error editing file {action['path']}: {str(edit_error)}")
+                            yield {
+                                "type": "error",
+                                "content": f"Error editing file: {str(edit_error)}"
+                            }
 
                     elif action["type"] == "delete_file":
                         yield {"type": "message", "content": f"Deleting file {action['path']}..."}
@@ -145,6 +180,7 @@ If you encounter compilation errors, analyze them and make the necessary fixes."
                             "type": "message",
                             "content": action["content"]
                         }
+                        await asyncio.sleep(0.4)  # Pausa entre mensajes
 
             except Exception as api_error:
                 logger.error(f"Error en la API de Anthropic: {str(api_error)}")
@@ -159,11 +195,13 @@ If you encounter compilation errors, analyze them and make the necessary fixes."
                 compilation_result = await self.file_manager.compile_solidity(current_file)
                 if not compilation_result["success"]:
                     yield {"type": "message", "content": "Found compilation errors. Attempting to fix..."}
+                    await asyncio.sleep(0.5)  # Pausa antes de intentar arreglar errores
                     fixed = await self.fix_compilation_errors(current_file, compilation_result["errors"])
                     if fixed:
                         yield {"type": "message", "content": "Successfully fixed compilation errors."}
                     else:
                         yield {"type": "message", "content": "Could not automatically fix all compilation errors."}
+                    await asyncio.sleep(0.5)  # Pausa final
 
         except Exception as e:
             logger.error(f"Error processing message: {str(e)}")
@@ -215,6 +253,8 @@ If you encounter compilation errors, analyze them and make the necessary fixes."
                             "path": self.current_contract_context["file"],
                             "edit": {"replace": code_content.strip()}
                         })
+                        # Actualizar el contexto inmediatamente
+                        self.current_contract_context["code"] = code_content.strip()
                     # Si no es sugerencia y no hay contrato actual, crear nuevo
                     else:
                         actions.append({
