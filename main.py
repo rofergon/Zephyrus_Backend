@@ -2,14 +2,13 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import json
 import logging
-from typing import Dict, List
+from typing import Dict
 import asyncio
 from agent import Agent
 from file_manager import FileManager
 from session_manager import SessionManager
 import uuid
 from datetime import datetime
-from pydantic import BaseModel
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -20,7 +19,7 @@ app = FastAPI()
 # Configurar CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # En producción, especifica los orígenes permitidos
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -35,7 +34,7 @@ class ConnectionManager:
         self.active_connections: Dict[str, WebSocket] = {}
         self.agents: Dict[str, Agent] = {}
         self.file_manager = FileManager()
-        self.session_manager = session_manager  # Usar la instancia única
+        self.session_manager = session_manager
 
     async def connect(self, websocket: WebSocket, client_id: str):
         await websocket.accept()
@@ -54,143 +53,13 @@ class ConnectionManager:
         if client_id in self.active_connections:
             await self.active_connections[client_id].send_text(message)
 
-    async def broadcast(self, message: str):
-        for connection in self.active_connections.values():
-            await connection.send_text(message)
-
 manager = ConnectionManager()
 
-class SessionCreate(BaseModel):
-    name: str | None = None
-    wallet_address: str | None = None
-
-class SessionRename(BaseModel):
-    new_name: str
-
-# Endpoints REST para gestión de sesiones
-@app.get("/api/sessions/{client_id}")
-async def get_client_sessions(client_id: str, wallet_address: str | None = None):
-    sessions = manager.session_manager.get_client_sessions(client_id, wallet_address)
-    return [session.to_dict() for session in sessions]
-
-@app.post("/api/sessions/{client_id}")
-async def create_session(client_id: str, session_data: SessionCreate):
-    try:
-        name = session_data.name if session_data.name else f"Session {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        session = manager.session_manager.create_session(
-            name=name,
-            client_id=client_id,
-            wallet_address=session_data.wallet_address
-        )
-        return session.to_dict()
-    except Exception as e:
-        logger.error(f"Error creating session: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.delete("/api/sessions/{session_id}")
-async def delete_session(session_id: str):
-    manager.session_manager.delete_session(session_id)
-    return {"status": "success"}
-
-@app.put("/api/sessions/{session_id}/name")
-async def rename_session(session_id: str, rename_data: SessionRename):
-    try:
-        manager.session_manager.rename_session(session_id, rename_data.new_name)
-        return {"status": "success"}
-    except Exception as e:
-        logger.error(f"Error renaming session: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 # WebSocket endpoint con manejo de sesiones
-@app.websocket("/ws/agent/{client_id}/{session_id}")
-async def websocket_endpoint(
-    websocket: WebSocket,
-    client_id: str,
-    session_id: str,
-    wallet_address: str | None = None
-):
-    await manager.connect(websocket, client_id)
-    session = manager.session_manager.get_session(session_id)
-    
-    if not session:
-        await websocket.close(code=4000, reason="Session not found")
-        return
-
-    # Verificar que la billetera coincida si está presente
-    if wallet_address and session.wallet_address and wallet_address != session.wallet_address:
-        await websocket.close(code=4001, reason="Unauthorized wallet address")
-        return
-        
-    try:
-        # Enviar el historial de la sesión al cliente
-        if session.conversation_history:
-            for message in session.conversation_history:
-                await manager.send_message(json.dumps(message), client_id)
-
-        while True:
-            data = await websocket.receive_text()
-            try:
-                message_data = json.loads(data)
-                content = message_data.get("content", "")
-                context = message_data.get("context", {})
-                
-                # Procesar el mensaje con el agente
-                agent = manager.agents[client_id]
-                response_generator = agent.process_message(content, context)
-                
-                async for response in response_generator:
-                    # Guardar la respuesta en el historial de la sesión
-                    manager.session_manager.add_to_conversation_history(
-                        session_id,
-                        {
-                            "type": response["type"],
-                            "content": response["content"],
-                            "timestamp": message_data.get("timestamp", None),
-                            "sender": "agent"
-                        }
-                    )
-                    
-                    # Enviar la respuesta al cliente
-                    await manager.send_message(
-                        json.dumps(response),
-                        client_id
-                    )
-                    
-            except json.JSONDecodeError:
-                logger.error(f"Invalid JSON received: {data}")
-                await manager.send_message(
-                    json.dumps({
-                        "type": "error",
-                        "content": "Invalid message format"
-                    }),
-                    client_id
-                )
-            except Exception as e:
-                logger.error(f"Error processing message: {str(e)}")
-                await manager.send_message(
-                    json.dumps({
-                        "type": "error",
-                        "content": f"Error: {str(e)}"
-                    }),
-                    client_id
-                )
-
-    except WebSocketDisconnect:
-        manager.disconnect(client_id)
-    except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
-        manager.disconnect(client_id)
-
-# Endpoint para conexión automática
 @app.websocket("/ws/agent")
-async def websocket_endpoint_auto(websocket: WebSocket, wallet_address: str | None = None):
+async def websocket_endpoint(websocket: WebSocket, wallet_address: str | None = None):
     client_id = str(uuid.uuid4())
-    session_name = f"Session {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-    session = manager.session_manager.create_session(
-        name=session_name,
-        client_id=client_id,
-        wallet_address=wallet_address
-    )
+    session = manager.session_manager.create_session(client_id, wallet_address)
     
     await manager.connect(websocket, client_id)
     try:
@@ -200,33 +69,78 @@ async def websocket_endpoint_auto(websocket: WebSocket, wallet_address: str | No
                 "type": "connection_established",
                 "client_id": client_id,
                 "session_id": session.session_id,
-                "session_name": session.name
+                "session_name": f"Session {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             }),
             client_id
         )
-        
+
+        # Enviar los contextos al cliente
+        contexts = manager.session_manager.get_session_contexts(session.session_id)
+        await manager.send_message(
+            json.dumps({
+                "type": "contexts_loaded",
+                "content": contexts
+            }),
+            client_id
+        )
+
         while True:
             data = await websocket.receive_text()
             try:
                 message_data = json.loads(data)
                 content = message_data.get("content", "")
                 context = message_data.get("context", {})
-                
+                message_type = message_data.get("type", "message")
+                context_id = message_data.get("contextId")
+
+                if message_type == "create_context":
+                    # Crear nuevo contexto
+                    new_context = manager.session_manager.create_context(
+                        session.session_id,
+                        message_data.get("name", f"Chat {len(contexts) + 1}")
+                    )
+                    await manager.send_message(
+                        json.dumps({
+                            "type": "context_created",
+                            "content": new_context
+                        }),
+                        client_id
+                    )
+                    continue
+
+                if message_type == "switch_context":
+                    # Cambiar contexto activo
+                    switched_context = manager.session_manager.switch_context(
+                        session.session_id,
+                        message_data.get("contextId")
+                    )
+                    await manager.send_message(
+                        json.dumps({
+                            "type": "context_switched",
+                            "content": switched_context
+                        }),
+                        client_id
+                    )
+                    continue
+
                 # Procesar el mensaje con el agente
                 agent = manager.agents[client_id]
-                response_generator = agent.process_message(content, context)
+                response_generator = agent.process_message(content, context, context_id)
                 
                 async for response in response_generator:
-                    # Guardar la respuesta en el historial de la sesión
-                    manager.session_manager.add_to_conversation_history(
-                        session.session_id,
-                        {
-                            "type": response["type"],
-                            "content": response["content"],
-                            "timestamp": message_data.get("timestamp", None),
-                            "sender": "agent"
-                        }
-                    )
+                    if context_id:
+                        # Guardar la respuesta en el contexto específico
+                        manager.session_manager.add_message_to_context(
+                            session.session_id,
+                            context_id,
+                            {
+                                "id": str(uuid.uuid4()),
+                                "text": response["content"],
+                                "sender": "ai",
+                                "timestamp": message_data.get("timestamp", datetime.now().timestamp() * 1000),
+                                "type": response["type"]
+                            }
+                        )
                     
                     # Enviar la respuesta al cliente
                     await manager.send_message(

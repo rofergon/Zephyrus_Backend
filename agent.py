@@ -17,7 +17,7 @@ class Agent:
             raise ValueError("ANTHROPIC_API_KEY no encontrada en las variables de entorno")
         self.anthropic = AsyncAnthropic(api_key=api_key)
         self.file_manager = file_manager
-        self.conversation_history: List[Dict] = []
+        self.conversation_histories: Dict[str, List[Dict]] = {}  # Historial por contexto
         self.max_retries = 3
         self.max_compilation_attempts = 5
         # Add persistent context
@@ -27,9 +27,27 @@ class Agent:
             "file_system": {}
         }
 
-    async def process_message(self, message: str, context: Dict) -> AsyncGenerator[Dict, None]:
+    async def process_message(self, message: str, context: Dict, context_id: str | None = None) -> AsyncGenerator[Dict, None]:
         """Procesa un mensaje del usuario y genera respuestas."""
         try:
+            # Inicializar el historial del contexto si no existe
+            if context_id and context_id not in self.conversation_histories:
+                self.conversation_histories[context_id] = []
+            
+            # Actualizar el historial del contexto actual
+            if context_id:
+                self.conversation_histories[context_id].append({
+                    "role": "user",
+                    "content": message
+                })
+                current_history = self.conversation_histories[context_id]
+            else:
+                # Si no hay context_id, usar un historial temporal
+                current_history = [{
+                    "role": "user",
+                    "content": message
+                }]
+
             # Update contract context if provided in the message
             if context.get("currentFile"):
                 self.current_contract_context["file"] = context["currentFile"]
@@ -37,12 +55,6 @@ class Agent:
                 self.current_contract_context["code"] = context["currentCode"]
             if context.get("fileSystem"):
                 self.current_contract_context["file_system"] = context["fileSystem"]
-
-            # Añadir el mensaje del usuario al historial
-            self.conversation_history.append({
-                "role": "user",
-                "content": message
-            })
 
             # Preparar el contexto del sistema
             system_prompt = """You are an AI assistant specialized in Solidity smart contract development.
@@ -82,8 +94,8 @@ If you encounter compilation errors, analyze them and make the necessary fixes."
             current_file = self.current_contract_context["file"]
             current_code = self.current_contract_context["code"]
 
-            # Construir los mensajes para Claude
-            messages = [*self.conversation_history]
+            # Construir los mensajes para Claude usando el historial del contexto actual
+            messages = current_history
 
             if current_file and current_code:
                 messages.append({
@@ -92,7 +104,7 @@ If you encounter compilation errors, analyze them and make the necessary fixes."
                 })
 
             try:
-                # Obtener la respuesta de Claude con manejo de errores específico
+                # Obtener la respuesta de Claude
                 response = await self.anthropic.messages.create(
                     model="claude-3-sonnet-20240229",
                     max_tokens=4096,
@@ -101,9 +113,15 @@ If you encounter compilation errors, analyze them and make the necessary fixes."
                     temperature=0.7
                 )
                 
-                # Verificar que la respuesta tenga el formato esperado
                 if not response or not hasattr(response, 'content') or not response.content:
                     raise ValueError("Respuesta inválida de la API de Anthropic")
+
+                # Guardar la respuesta en el historial del contexto
+                if context_id:
+                    self.conversation_histories[context_id].append({
+                        "role": "assistant",
+                        "content": response.content[0].text
+                    })
 
                 # Procesar la respuesta
                 response_content = response.content[0].text
