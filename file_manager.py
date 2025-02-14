@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import asyncio
+import typing
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +21,8 @@ class FileSystemWatcher(FileSystemEventHandler):
 class FileManager:
     def __init__(self, base_path: str = "../"):
         self.base_path = os.path.abspath(base_path)
-        self.file_cache: Dict[str, str] = {}
-        self.observers: List[Observer] = []
+        self.file_cache: dict[str, str] = {}
+        self.observers: list[Observer] = [] # type: ignore
         self._setup_watcher()
 
     def _setup_watcher(self):

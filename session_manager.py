@@ -1,197 +1,231 @@
 import json
 import os
 from datetime import datetime
-from typing import Dict, List, Optional
 import uuid
 import logging
+from typing import List
 
-# Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class Session:
-    def __init__(self, session_id: str, client_id: str, wallet_address: str | None = None):
-        self.session_id = session_id
-        self.client_id = client_id
+class Chat:
+    def __init__(self, chat_id: str, name: str, wallet_address: str):
+        self.chat_id = chat_id
+        self.name = name
         self.wallet_address = wallet_address
         self.created_at = datetime.now().isoformat()
         self.last_accessed = datetime.now().isoformat()
-        self.contexts: List[Dict] = [{
-            "id": str(uuid.uuid4()),
-            "name": "Main Chat",
-            "type": "chat",
-            "timestamp": datetime.now().timestamp() * 1000,
-            "content": "",
-            "active": True,
-            "messages": []
-        }]
-        logger.info(f"Created new session: {session_id} for client: {client_id} with wallet: {wallet_address}")
+        self.messages = []
+        self.active_files = {}  # {base_name: {content, language, timestamp}}
+        self.file_history = {}  # {base_name: [{content, timestamp}]}
+        logger.info(f"Created new chat: {chat_id} for wallet: {wallet_address}")
 
     def to_dict(self) -> dict:
+        # Solo incluir los archivos activos en la serialización
         return {
-            "session_id": self.session_id,
-            "client_id": self.client_id,
+            "id": self.chat_id,
+            "name": self.name,
             "wallet_address": self.wallet_address,
             "created_at": self.created_at,
             "last_accessed": self.last_accessed,
-            "contexts": self.contexts
-        }
-
-    def get_context(self, context_id: str) -> Dict | None:
-        return next((ctx for ctx in self.contexts if ctx["id"] == context_id), None)
-
-    def add_message_to_context(self, context_id: str, message: Dict) -> None:
-        context = self.get_context(context_id)
-        if context:
-            if "messages" not in context:
-                context["messages"] = []
-            context["messages"].append(message)
-        else:
-            raise ValueError(f"Context {context_id} not found")
-
-    def create_context(self, name: str) -> Dict:
-        # Desactivar todos los contextos existentes
-        for context in self.contexts:
-            context["active"] = False
-
-        # Crear nuevo contexto
-        new_context = {
-            "id": str(uuid.uuid4()),
-            "name": name,
+            "messages": self.messages,
             "type": "chat",
-            "timestamp": datetime.now().timestamp() * 1000,
-            "content": "",
-            "active": True,
-            "messages": []
+            "virtualFiles": {
+                f"contracts/{name}": file_data 
+                for name, file_data in self.active_files.items()
+            }
         }
-        self.contexts.append(new_context)
-        return new_context
 
-    def switch_context(self, context_id: str) -> Dict:
-        context_found = False
-        for context in self.contexts:
-            if context["id"] == context_id:
-                context["active"] = True
-                context_found = True
-            else:
-                context["active"] = False
+    def add_message(self, message: dict) -> None:
+        self.messages.append(message)
+        self.last_accessed = datetime.now().isoformat()
 
-        if not context_found:
-            raise ValueError(f"Context {context_id} not found")
+    def add_virtual_file(self, path: str, content: str, language: str = "solidity") -> None:
+        """Añade o actualiza un archivo virtual en el chat."""
+        current_time = datetime.now().timestamp() * 1000
+        
+        # Extraer el nombre base del archivo (eliminar timestamp si existe)
+        base_name = os.path.basename(path).replace(".sol", "")
+        base_name = base_name.split("_")[0] + ".sol"
+        
+        # Si el contenido es diferente al actual, crear nueva versión
+        if base_name in self.active_files:
+            current = self.active_files[base_name]
+            if content != current["content"]:
+                # Guardar versión anterior en el historial
+                if base_name not in self.file_history:
+                    self.file_history[base_name] = []
+                self.file_history[base_name].append({
+                    "content": current["content"],
+                    "timestamp": current["timestamp"]
+                })
+                # Mantener solo las últimas 5 versiones en el historial
+                if len(self.file_history[base_name]) > 5:
+                    self.file_history[base_name] = self.file_history[base_name][-5:]
+        
+        # Actualizar archivo activo
+        self.active_files[base_name] = {
+            "content": content,
+            "language": language,
+            "timestamp": current_time
+        }
+        
+        self.last_accessed = datetime.now().isoformat()
 
-        return self.get_context(context_id)
-
-class SessionManager:
-    def __init__(self, base_path: str = "./sessions"):
-        self.base_path = base_path
-        self.sessions: Dict[str, Session] = {}
-        self._ensure_base_path()
-        self._load_sessions()
-
-    def _ensure_base_path(self):
-        """Asegura que existe el directorio base para las sesiones"""
-        if not os.path.exists(self.base_path):
-            os.makedirs(self.base_path)
-
-    def _get_session_path(self, session_id: str) -> str:
-        """Obtiene la ruta completa para una sesión"""
-        return os.path.join(self.base_path, f"{session_id}.json")
-
-    def _load_sessions(self):
-        """Carga todas las sesiones guardadas"""
-        if not os.path.exists(self.base_path):
-            os.makedirs(self.base_path)
-            return
+    def get_virtual_file(self, path: str, version: int = None) -> dict | None:
+        """Obtiene un archivo virtual del chat, opcionalmente una versión específica."""
+        base_name = os.path.basename(path).replace(".sol", "").split("_")[0] + ".sol"
+        
+        if version is None:
+            # Retornar versión activa
+            if base_name in self.active_files:
+                return self.active_files[base_name]
+            return None
             
-        self.sessions.clear()
+        # Retornar versión específica del historial
+        if base_name in self.file_history:
+            history = self.file_history[base_name]
+            if 0 <= version < len(history):
+                return history[version]
         
-        for filename in os.listdir(self.base_path):
-            if filename.endswith(".json"):
-                session_path = os.path.join(self.base_path, filename)
-                try:
-                    with open(session_path, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                        session = Session(
-                            data["session_id"],
-                            data["client_id"],
-                            data.get("wallet_address")
-                        )
-                        session.created_at = data["created_at"]
-                        session.last_accessed = data["last_accessed"]
-                        session.contexts = data.get("contexts", [])
-                        self.sessions[session.session_id] = session
-                except Exception as e:
-                    logger.error(f"Error loading session {filename}: {str(e)}")
+        return None
 
-    def create_session(self, client_id: str, wallet_address: str | None = None) -> Session:
-        """Crea una nueva sesión"""
-        session_id = str(uuid.uuid4())
-        session = Session(session_id, client_id, wallet_address)
-        
-        if wallet_address:
-            for existing_session in self.sessions.values():
-                if existing_session.wallet_address == wallet_address:
-                    existing_session.client_id = client_id
-                    self._save_session(existing_session)
-                    return existing_session
-        
-        self.sessions[session_id] = session
-        self._save_session(session)
-        return session
+    def delete_virtual_file(self, path: str) -> None:
+        """Elimina un archivo virtual del chat."""
+        base_name = os.path.basename(path).replace(".sol", "").split("_")[0] + ".sol"
+        if base_name in self.active_files:
+            del self.active_files[base_name]
+            if base_name in self.file_history:
+                del self.file_history[base_name]
+        self.last_accessed = datetime.now().isoformat()
 
-    def get_session(self, session_id: str) -> Session | None:
-        """Obtiene una sesión por su ID"""
-        session = self.sessions.get(session_id)
-        if session:
-            session.last_accessed = datetime.now().isoformat()
-            self._save_session(session)
-        return session
-
-    def _save_session(self, session: Session):
-        """Guarda una sesión en disco"""
-        try:
-            if not os.path.exists(self.base_path):
-                os.makedirs(self.base_path)
-                
-            session_path = self._get_session_path(session.session_id)
-            
-            with open(session_path, 'w', encoding='utf-8') as f:
-                json.dump(session.to_dict(), f, indent=2, ensure_ascii=False)
-        except Exception as e:
-            logger.error(f"Error saving session {session.session_id}: {str(e)}")
-
-    def get_session_contexts(self, session_id: str) -> List[Dict]:
-        """Obtiene los contextos de una sesión"""
-        session = self.get_session(session_id)
-        if session:
-            return session.contexts
+    def get_file_history(self, path: str) -> List[dict]:
+        """Obtiene el historial de versiones de un archivo."""
+        base_name = os.path.basename(path).replace(".sol", "").split("_")[0] + ".sol"
+        if base_name in self.file_history:
+            return self.file_history[base_name]
         return []
 
-    def create_context(self, session_id: str, name: str) -> Dict:
-        """Crea un nuevo contexto en una sesión"""
-        session = self.get_session(session_id)
-        if not session:
-            raise ValueError(f"Session {session_id} not found")
+class ChatManager:
+    def __init__(self, base_path: str = "./chats"):
+        self.base_path = base_path
+        self.chats = {}  # wallet_address -> {chat_id -> Chat}
+        self._ensure_base_path()
+        self._load_chats()
 
-        new_context = session.create_context(name)
-        self._save_session(session)
-        return new_context
+    def _ensure_base_path(self):
+        if not os.path.exists(self.base_path):
+            os.makedirs(self.base_path)
 
-    def switch_context(self, session_id: str, context_id: str) -> Dict:
-        """Cambia el contexto activo en una sesión"""
-        session = self.get_session(session_id)
-        if not session:
-            raise ValueError(f"Session {session_id} not found")
+    def _get_chat_path(self, wallet_address: str, chat_id: str) -> str:
+        wallet_dir = os.path.join(self.base_path, wallet_address)
+        if not os.path.exists(wallet_dir):
+            os.makedirs(wallet_dir)
+        return os.path.join(wallet_dir, f"{chat_id}.json")
 
-        switched_context = session.switch_context(context_id)
-        self._save_session(session)
-        return switched_context
+    def _load_chats(self):
+        if not os.path.exists(self.base_path):
+            return
 
-    def add_message_to_context(self, session_id: str, context_id: str, message: Dict) -> None:
-        """Añade un mensaje a un contexto específico"""
-        session = self.get_session(session_id)
-        if not session:
-            raise ValueError(f"Session {session_id} not found")
+        for wallet_dir in os.listdir(self.base_path):
+            wallet_path = os.path.join(self.base_path, wallet_dir)
+            if os.path.isdir(wallet_path):
+                self.chats[wallet_dir] = {}
+                for chat_file in os.listdir(wallet_path):
+                    if chat_file.endswith(".json"):
+                        chat_path = os.path.join(wallet_path, chat_file)
+                        try:
+                            with open(chat_path, 'r', encoding='utf-8') as f:
+                                data = json.load(f)
+                                chat = Chat(
+                                    data["id"],
+                                    data["name"],
+                                    data["wallet_address"]
+                                )
+                                chat.created_at = data["created_at"]
+                                chat.last_accessed = data["last_accessed"]
+                                chat.messages = data.get("messages", [])
+                                chat.active_files = data.get("virtualFiles", {})  # Nuevo: cargar archivos virtuales
+                                self.chats[wallet_dir][chat.chat_id] = chat
+                        except Exception as e:
+                            logger.error(f"Error loading chat {chat_file}: {str(e)}")
 
-        session.add_message_to_context(context_id, message)
-        self._save_session(session) 
+    def create_chat(self, wallet_address: str, name: str = None) -> Chat:
+        if wallet_address not in self.chats:
+            self.chats[wallet_address] = {}
+            
+        chat_id = str(uuid.uuid4())
+        chat_name = name or f"Chat {len(self.chats[wallet_address]) + 1}"
+        chat = Chat(chat_id, chat_name, wallet_address)
+        
+        self.chats[wallet_address][chat_id] = chat
+        self._save_chat(chat)
+        return chat
+
+    def get_user_chats(self, wallet_address: str) -> list:
+        return [chat.to_dict() for chat in self.chats.get(wallet_address, {}).values()]
+
+    def get_chat(self, wallet_address: str, chat_id: str) -> Chat | None:
+        return self.chats.get(wallet_address, {}).get(chat_id)
+
+    def add_message_to_chat(self, wallet_address: str, chat_id: str, message: dict) -> None:
+        chat = self.get_chat(wallet_address, chat_id)
+        if chat:
+            chat.add_message(message)
+            self._save_chat(chat)
+        else:
+            raise ValueError(f"Chat {chat_id} not found for wallet {wallet_address}")
+
+    def add_virtual_file_to_chat(self, wallet_address: str, chat_id: str, path: str, content: str, language: str = "solidity") -> None:
+        """Añade o actualiza un archivo virtual en un chat específico."""
+        chat = self.get_chat(wallet_address, chat_id)
+        if chat:
+            chat.add_virtual_file(path, content, language)
+            self._save_chat(chat)
+        else:
+            raise ValueError(f"Chat {chat_id} not found for wallet {wallet_address}")
+
+    def get_virtual_file_from_chat(self, wallet_address: str, chat_id: str, path: str) -> dict | None:
+        """Obtiene un archivo virtual de un chat específico."""
+        chat = self.get_chat(wallet_address, chat_id)
+        if chat:
+            return chat.get_virtual_file(path)
+        return None
+
+    def delete_virtual_file_from_chat(self, wallet_address: str, chat_id: str, path: str) -> None:
+        """Elimina un archivo virtual de un chat específico."""
+        chat = self.get_chat(wallet_address, chat_id)
+        if chat:
+            chat.delete_virtual_file(path)
+            self._save_chat(chat)
+        else:
+            raise ValueError(f"Chat {chat_id} not found for wallet {wallet_address}")
+
+    def _save_chat(self, chat: Chat):
+        try:
+            chat_path = self._get_chat_path(chat.wallet_address, chat.chat_id)
+            with open(chat_path, 'w', encoding='utf-8') as f:
+                json.dump(chat.to_dict(), f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"Error saving chat {chat.chat_id}: {str(e)}")
+
+    def delete_chat(self, wallet_address: str, chat_id: str) -> None:
+        """Elimina un chat específico."""
+        try:
+            chat = self.get_chat(wallet_address, chat_id)
+            if not chat:
+                raise ValueError(f"Chat {chat_id} not found for wallet {wallet_address}")
+            
+            # Eliminar el archivo del chat
+            chat_path = self._get_chat_path(wallet_address, chat_id)
+            if os.path.exists(chat_path):
+                os.remove(chat_path)
+            
+            # Eliminar de la memoria
+            if wallet_address in self.chats and chat_id in self.chats[wallet_address]:
+                del self.chats[wallet_address][chat_id]
+            
+            logger.info(f"Deleted chat {chat_id} for wallet {wallet_address}")
+        except Exception as e:
+            logger.error(f"Error deleting chat {chat_id}: {str(e)}")
+            raise 
