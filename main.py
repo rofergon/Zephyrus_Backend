@@ -23,6 +23,10 @@ app.add_middleware(
 # Crear una única instancia de ConnectionManager
 manager = ConnectionManager()
 
+@app.get("/")
+async def healthcheck():
+    return {"status": "healthy", "message": "Server is running"}
+
 # WebSocket endpoint con manejo de sesiones
 @app.websocket("/ws/agent")
 async def websocket_endpoint(websocket: WebSocket, wallet_address: str | None = None, chat_id: str | None = None):
