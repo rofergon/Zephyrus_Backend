@@ -138,4 +138,4 @@ class EditActions:
             self.active_contract["content"] = code
             self.active_contract["is_complete"] = True
         if file_system is not None:
-            self.current_contract_context["file_system"] = file_system 
+            self.current_contract_context["file_system"] = file_system  

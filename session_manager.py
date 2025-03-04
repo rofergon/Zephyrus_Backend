@@ -162,6 +162,22 @@ class ChatManager:
         self._save_chat(chat)
         return chat
 
+    def create_chat_with_id(self, wallet_address: str, chat_id: str, name: str = None) -> Chat:
+        """Crea un chat con un ID específico."""
+        if wallet_address not in self.chats:
+            self.chats[wallet_address] = {}
+            
+        if chat_id in self.chats.get(wallet_address, {}):
+            # Si ya existe un chat con ese ID, devuélvelo
+            return self.chats[wallet_address][chat_id]
+            
+        chat_name = name or f"Chat {len(self.chats[wallet_address]) + 1}"
+        chat = Chat(chat_id, chat_name, wallet_address)
+        
+        self.chats[wallet_address][chat_id] = chat
+        self._save_chat(chat)
+        return chat
+
     def get_user_chats(self, wallet_address: str) -> list:
         return [chat.to_dict() for chat in self.chats.get(wallet_address, {}).values()]
 
@@ -228,4 +244,11 @@ class ChatManager:
             logger.info(f"Deleted chat {chat_id} for wallet {wallet_address}")
         except Exception as e:
             logger.error(f"Error deleting chat {chat_id}: {str(e)}")
-            raise 
+            raise
+
+    def get_chat_by_id(self, chat_id: str) -> Chat | None:
+        """Obtiene un chat por su ID, independientemente del wallet_address."""
+        for wallet_chats in self.chats.values():
+            if chat_id in wallet_chats:
+                return wallet_chats[chat_id]
+        return None 

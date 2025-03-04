@@ -19,13 +19,27 @@ class FileSystemWatcher(FileSystemEventHandler):
             self.callback(event.src_path)
 
 class FileManager:
-    def __init__(self, base_path: str = "../"):
-        self.base_path = os.path.abspath(base_path)
+    def __init__(self, base_path: str = "./workspace"):
+        # Get base path from environment variable or use default
+        self.base_path = os.path.abspath(os.getenv("BASE_PATH", base_path))
         self.file_cache: dict[str, str] = {}
         self.observers: list[Observer] = [] # type: ignore
-        self._setup_watcher()
+        
+        # Ensure base path exists
+        os.makedirs(self.base_path, exist_ok=True)
+        
+        try:
+            self._setup_watcher()
+        except Exception as e:
+            logger.warning(f"Failed to setup file watcher: {str(e)}. Continuing without file watching...")
+            # Initialize empty observers list to prevent errors
+            self.observers = []
 
     def _setup_watcher(self):
+        if not os.path.exists(self.base_path):
+            logger.warning(f"Base path {self.base_path} does not exist. Creating it...")
+            os.makedirs(self.base_path, exist_ok=True)
+            
         observer = Observer()
         event_handler = FileSystemWatcher(self._on_file_changed)
         observer.schedule(event_handler, self.base_path, recursive=True)

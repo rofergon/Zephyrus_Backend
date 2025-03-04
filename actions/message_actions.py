@@ -3,23 +3,53 @@ from typing import Dict, List, AsyncGenerator
 import asyncio
 import uuid
 from datetime import datetime
+from session_manager import ChatManager
 
 logger = logging.getLogger(__name__)
 
 class MessageActions:
-    def __init__(self, anthropic_client, edit_actions, compilation_actions):
+    def __init__(self, anthropic_client, edit_actions, compilation_actions, chat_manager: ChatManager):
         self.anthropic = anthropic_client
         self.edit_actions = edit_actions
         self.compilation_actions = compilation_actions
+        self.chat_manager = chat_manager
         self.conversation_histories: Dict[str, List[Dict]] = {}
         self.max_retries = 3
+
+    def _load_conversation_history(self, context_id: str) -> List[Dict]:
+        """Carga el historial de conversación desde el almacenamiento persistente."""
+        try:
+            # Obtener el chat del ChatManager directamente
+            chat = self.chat_manager.get_chat_by_id(context_id)
+            if chat:
+                # Convertir los mensajes al formato esperado por el historial de conversación
+                history = []
+                for msg in chat.messages:
+                    role = "assistant" if msg["sender"] == "ai" else "user"
+                    history.append({
+                        "role": role,
+                        "content": msg["text"]
+                    })
+                return history
+        except Exception as e:
+            logger.error(f"Error loading conversation history for context {context_id}: {str(e)}")
+        return []
 
     async def process_message(self, message: str, context: Dict, context_id: str | None = None) -> AsyncGenerator[Dict, None]:
         """Procesa un mensaje del usuario y genera respuestas."""
         try:
+            # Validar que el mensaje no esté vacío
+            if not message or not message.strip():
+                yield {
+                    "type": "message",
+                    "content": "Ready to help you with your smart contract development."
+                }
+                return
+
             # Inicializar el historial del contexto si no existe
             if context_id and context_id not in self.conversation_histories:
-                self.conversation_histories[context_id] = []
+                # Cargar el historial desde el almacenamiento persistente
+                self.conversation_histories[context_id] = self._load_conversation_history(context_id)
             
             # Actualizar el historial del contexto actual
             if context_id:
@@ -43,110 +73,86 @@ class MessageActions:
                     file_system=context.get("fileSystem", {})
                 )
 
-            # Preparar el contexto del sistema
-            system_prompt = """You are an AI assistant specialized in Solidity smart contract development.
-Your task is to help users write, edit, and debug smart contracts.
+            # Obtener la respuesta de Claude con parámetros optimizados
+            response = await self.anthropic.messages.create(
+                model="claude-3-5-sonnet-20241022",
+                max_tokens=8096,  # Aumentado para permitir respuestas más completas
+                temperature=0.3,  # Reducido para respuestas más consistentes y precisas
+                system="""You are an AI assistant specialized in Solidity smart contract development using OpenZeppelin v5.2.0.
+Your primary role is to write, edit, and debug smart contracts with a focus on security and best practices.
 
-IMPORTANT RULES FOR CONTRACT EDITING:
-1. When editing a contract, ALWAYS:
-   - First acknowledge the current contract state
-   - Show the COMPLETE contract with your changes integrated
-   - Use ```solidity blocks for the complete updated contract
-   - Maintain the existing contract structure
-   - Preserve all existing functionality
-   - Add new functionality in the appropriate location
+CRITICAL RULES FOR SMART CONTRACT DEVELOPMENT:
 
-2. When adding new functions or features:
-   - DO NOT show only the new code
-   - Instead, show the entire contract with the new code integrated
-   - Place new functions in a logical location within the contract
-   - Maintain consistent formatting and style
+1. When fixing errors or bugs:
+   - ALWAYS provide the complete contract code with all corrections applied
+     - Explain why the changes resolve the issue
+   - Include all necessary imports and dependencies
 
-3. Contract Version and License:
-   - ALWAYS use Solidity version 0.8.20 (pragma solidity ^0.8.20;)
-   - ALWAYS include SPDX-License-Identifier
-   - Preserve existing imports and inheritance
+2. Code Structure:
+   - Maintain consistent formatting
+   - Include comprehensive comments
+   - Keep proper function ordering
+   - Follow Solidity style guide
 
-4. Response Format:
-   - First explain what changes you're making
-   - Then show the COMPLETE updated contract
-   - Finally explain any additional considerations
+3. Security Best Practices:
+   - Implement access control
+   - Add input validation
+   - Use SafeMath when needed
+   - Follow checks-effects-interactions pattern
+   - Emit events for state changes
+      
+4. OpenZeppelin Integration:
+   - Use latest v5.2.0 contracts
+   - Properly inherit and override functions
+   - Implement standard interfaces
+   
+5. Response Format:
+   - First: Explain planned changes/approach
+   - Then: Show complete contract code
+   - Finally: Explain security considerations
+   - Use ```solidity for code blocks
 
-5. Context Awareness:
-   - Keep track of all previous edits and changes
-   - Each response should reflect the most current state of the contract
-   - Never revert to an earlier version unless explicitly requested
+6. Error Prevention:
+   - Double-check all imports exist in v5.2.0
+   - Verify function visibility
+   - Ensure proper event emissions
+   - Add input validation
+   - Include require/revert messages
 
-6. Code Suggestions:
-   - When making suggestions, prefix with "Suggestion:" or "Idea:"
-   - For suggestions, you can show partial code examples
-   - But for actual edits, always show the complete contract
+7. Comment Style:
+   - Use // style comments ONLY for Solidity contract code (e.g. SPDX-License, pragma, etc.)
+   - For all other explanations and comments outside code blocks, use regular text""",
+                messages=current_history,
+                stop_sequences=["\```"]  # Detener después de bloques de código
+            )
+            
+            if not response or not hasattr(response, 'content') or not response.content:
+                raise ValueError("Respuesta inválida de la API de Anthropic")
 
-Example of a good edit response:
-"I'll add the new function `checkBalance` to the contract. Here's the complete updated contract with the new function integrated:
+            # Guardar la respuesta en el historial del contexto
+            if context_id:
+                self.conversation_histories[context_id].append({
+                    "role": "assistant",
+                    "content": response.content[0].text
+                })
 
-```solidity
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+            # Procesar la respuesta
+            response_content = response.content[0].text
+            yield {"type": "message", "content": "Analyzing your request..."}
+            await asyncio.sleep(0.3 )  # Pequeña pausa inicial
 
-contract ExistingContract {
-    // Existing code...
-    
-    // New function added
-    function checkBalance() public view returns (uint256) {
-        return balance;
-    }
-    
-    // Rest of existing code...
-}
-```"
+            # Analizar la respuesta para acciones específicas
+            actions = self.edit_actions.parse_actions(response_content)
+            
+            for action in actions:
+                yield await self.handle_action(action, context_id)
+                await asyncio.sleep(0.4)  # Pausa entre acciones
 
-Remember: NEVER show just the new code alone - always show the complete updated contract with new code integrated into the appropriate location."""
-
-            try:
-                # Obtener la respuesta de Claude
-                response = await self.anthropic.messages.create(
-                    model="claude-3-sonnet-20240229",
-                    max_tokens=4096,
-                    system=system_prompt,
-                    messages=current_history,
-                    temperature=0.7
-                )
-                
-                if not response or not hasattr(response, 'content') or not response.content:
-                    raise ValueError("Respuesta inválida de la API de Anthropic")
-
-                # Guardar la respuesta en el historial del contexto
-                if context_id:
-                    self.conversation_histories[context_id].append({
-                        "role": "assistant",
-                        "content": response.content[0].text
-                    })
-
-                # Procesar la respuesta
-                response_content = response.content[0].text
-                yield {"type": "message", "content": "Analyzing your request..."}
-                await asyncio.sleep(0.5)  # Pequeña pausa inicial
-
-                # Analizar la respuesta para acciones específicas
-                actions = self.edit_actions.parse_actions(response_content)
-                
-                for action in actions:
-                    yield await self.handle_action(action, context_id)
-                    await asyncio.sleep(0.4)  # Pausa entre acciones
-
-            except Exception as api_error:
-                logger.error(f"Error en la API de Anthropic: {str(api_error)}")
-                yield {
-                    "type": "error",
-                    "content": f"Error al comunicarse con la API de Anthropic: {str(api_error)}"
-                }
-
-        except Exception as e:
-            logger.error(f"Error processing message: {str(e)}")
+        except Exception as api_error:
+            logger.error(f"Error en la API de Anthropic: {str(api_error)}")
             yield {
                 "type": "error",
-                "content": f"Error: {str(e)}"
+                "content": f"Error al comunicarse con la API de Anthropic: {str(api_error)}"
             }
 
     async def handle_action(self, action: Dict, context_id: str | None = None) -> Dict:
@@ -173,7 +179,7 @@ Remember: NEVER show just the new code alone - always show the complete updated 
             return {
                 "type": "code_edit",
                 "content": action["edit"]["replace"],
-                "metadata": {
+                "metadata": {  
                     "path": action["path"],
                     "language": "solidity"
                 }
