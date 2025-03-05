@@ -150,20 +150,8 @@ class ChatManager:
                         except Exception as e:
                             logger.error(f"Error loading chat {chat_file}: {str(e)}")
 
-    def create_chat(self, wallet_address: str, name: str = None) -> Chat:
-        if wallet_address not in self.chats:
-            self.chats[wallet_address] = {}
-            
-        chat_id = str(uuid.uuid4())
-        chat_name = name or f"Chat {len(self.chats[wallet_address]) + 1}"
-        chat = Chat(chat_id, chat_name, wallet_address)
-        
-        self.chats[wallet_address][chat_id] = chat
-        self._save_chat(chat)
-        return chat
-
-    def create_chat_with_id(self, wallet_address: str, chat_id: str, name: str = None) -> Chat:
-        """Crea un chat con un ID específico."""
+    def create_chat(self, wallet_address: str, chat_id: str, name: str = None) -> Chat:
+        """Crea un chat con el ID proporcionado por el frontend."""
         if wallet_address not in self.chats:
             self.chats[wallet_address] = {}
             

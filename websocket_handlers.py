@@ -42,7 +42,7 @@ async def handle_websocket_connection(
         existing_chat = manager.chat_manager.get_chat_by_id(chat_id)
         if not existing_chat:
             logger.info(f"Creating new chat - ID: {chat_id}, Wallet: {wallet_address}")
-            manager.chat_manager.create_chat_with_id(wallet_address, chat_id)
+            manager.chat_manager.create_chat(wallet_address, chat_id)
             logger.info(f"Successfully created new chat with ID {chat_id} for wallet {wallet_address}")
         else:
             logger.info(f"Using existing chat - ID: {chat_id}, Wallet: {wallet_address}")
