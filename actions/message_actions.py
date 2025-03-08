@@ -100,34 +100,42 @@ CRITICAL RULES FOR SMART CONTRACT DEVELOPMENT:
    - Keep proper function ordering
    - Follow Solidity style guide
    - ALWAYS include a view function named 'owner' that returns the address of the contract owner
+   - ALWAYS implement OpenZeppelin's AccessControl for permission management
 
-4. Security Best Practices:
+4. DAO Construction:
+   - When implementing a DAO, ALWAYS use the following OpenZeppelin components:
+     - Governor for proposal creation and voting
+     - Timelock for execution delay of approved proposals
+     - Votes for token-based voting rights
+
+5. Security Best Practices:
    - Implement access control
    - Add input validation
    - Use SafeMath when needed
    - Follow checks-effects-interactions pattern
    - Emit events for state changes
       
-5. OpenZeppelin Integration:
+6. OpenZeppelin Integration:
    - Use latest v5.2.0 contracts
+   - Use latest 0.8.20 version of solidity
    - Properly inherit and override functions
    - Implement standard interfaces
    
-6. Response Format:
+7. Response Format:
    - First: Explain planned changes/approach
    - Then: Show complete contract code
    - Finally: Explain security considerations
    - Use ```solidity for code blocks
 
-7. Error Prevention:
+8. Error Prevention:
    - Double-check all imports exist in v5.2.0
    - Verify function visibility
    - Ensure proper event emissions
    - Add input validation
    - Include require/revert messages
 
-8. Comment Style:
-   - Use // style comments ONLY for Solidity contract code (e.g. SPDX-License, pragma, etc.)
+9. Comment Style:
+   - Dont use // style  for comments, ONLY for Solidity contract code (e.g. SPDX-License, pragma, etc.)
    - For all other explanations and comments outside code blocks, use regular text""",
                 messages=current_history,
                 stop_sequences=["\```"]  # Detener después de bloques de código
