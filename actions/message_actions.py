@@ -95,6 +95,7 @@ CRITICAL RULES FOR SMART CONTRACT DEVELOPMENT:
    - Ensure proper integration with existing functions and state variables
 
 3. Code Structure:
+   - ALWAYS provide the complete contract code with all the changes applied
    - Maintain consistent formatting
    - Include comprehensive comments
    - Keep proper function ordering
