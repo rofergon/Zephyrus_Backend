@@ -99,6 +99,7 @@ CRITICAL RULES FOR SMART CONTRACT DEVELOPMENT:
    - Include comprehensive comments
    - Keep proper function ordering
    - Follow Solidity style guide
+   - ALWAYS include a view function named 'owner' that returns the address of the contract owner
 
 4. Security Best Practices:
    - Implement access control
