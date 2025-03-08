@@ -17,12 +17,12 @@ class MessageActions:
         self.max_retries = 3
 
     def _load_conversation_history(self, context_id: str) -> List[Dict]:
-        """Carga el historial de conversación desde el almacenamiento persistente."""
+        """Loads the conversation history from persistent storage."""
         try:
-            # Obtener el chat del ChatManager directamente
+            # Get the chat directly from ChatManager
             chat = self.chat_manager.get_chat_by_id(context_id)
             if chat:
-                # Convertir los mensajes al formato esperado por el historial de conversación
+                # Convert messages to the format expected by the conversation history
                 history = []
                 for msg in chat.messages:
                     role = "assistant" if msg["sender"] == "ai" else "user"
@@ -36,9 +36,9 @@ class MessageActions:
         return []
 
     async def process_message(self, message: str, context: Dict, context_id: str | None = None) -> AsyncGenerator[Dict, None]:
-        """Procesa un mensaje del usuario y genera respuestas."""
+        """Processes a user message and generates responses."""
         try:
-            # Validar que el mensaje no esté vacío
+            # Validate that the message is not empty
             if not message or not message.strip():
                 yield {
                     "type": "message",
@@ -46,12 +46,12 @@ class MessageActions:
                 }
                 return
 
-            # Inicializar el historial del contexto si no existe
+            # Initialize context history if it doesn't exist
             if context_id and context_id not in self.conversation_histories:
-                # Cargar el historial desde el almacenamiento persistente
+                # Load history from persistent storage
                 self.conversation_histories[context_id] = self._load_conversation_history(context_id)
             
-            # Actualizar el historial del contexto actual
+            # Update current context history
             if context_id:
                 self.conversation_histories[context_id].append({
                     "role": "user",
@@ -59,7 +59,7 @@ class MessageActions:
                 })
                 current_history = self.conversation_histories[context_id]
             else:
-                # Si no hay context_id, usar un historial temporal
+                # If there's no context_id, use a temporary history
                 current_history = [{
                     "role": "user",
                     "content": message
@@ -73,11 +73,11 @@ class MessageActions:
                     file_system=context.get("fileSystem", {})
                 )
 
-            # Obtener la respuesta de Claude con parámetros optimizados
+            # Get response from Claude with optimized parameters
             response = await self.anthropic.messages.create(
                 model="claude-3-5-sonnet-20241022",
-                max_tokens=8096,  # Aumentado para permitir respuestas más completas
-                temperature=0.4,  # Reducido para respuestas más consistentes y precisas
+                max_tokens=8096,  # Increased to allow more complete responses
+                temperature=0.4,  # Reduced for more consistent and precise responses
                 system="""You are an AI assistant specialized in Solidity smart contract development using OpenZeppelin v5.2.0.
 Your primary role is to write, edit, and debug smart contracts with a focus on security and best practices.
 
@@ -136,43 +136,43 @@ CRITICAL RULES FOR SMART CONTRACT DEVELOPMENT:
    - Include require/revert messages
 
 9. Comment Style:
-   - Dont use // style  for comments, ONLY for Solidity contract code (e.g. SPDX-License, pragma, etc.)
+   - Use // style comments ONLY for Solidity contract code (e.g. SPDX-License, pragma, etc.) 
    - For all other explanations and comments outside code blocks, use regular text""",
                 messages=current_history,
-                stop_sequences=["\```"]  # Detener después de bloques de código
+                stop_sequences=["\```"]  # Stop after code blocks
             )
             
             if not response or not hasattr(response, 'content') or not response.content:
-                raise ValueError("Respuesta inválida de la API de Anthropic")
+                raise ValueError("Invalid response from Anthropic API")
 
-            # Guardar la respuesta en el historial del contexto
+            # Save the response in the context history
             if context_id:
                 self.conversation_histories[context_id].append({
                     "role": "assistant",
                     "content": response.content[0].text
                 })
 
-            # Procesar la respuesta
+            # Process the response
             response_content = response.content[0].text
             yield {"type": "message", "content": "Analyzing your request..."}
-            await asyncio.sleep(0.3 )  # Pequeña pausa inicial
+            await asyncio.sleep(0.3 )  # Short initial pause
 
-            # Analizar la respuesta para acciones específicas
+            # Analyze the response for specific actions
             actions = self.edit_actions.parse_actions(response_content)
             
             for action in actions:
                 yield await self.handle_action(action, context_id)
-                await asyncio.sleep(0.4)  # Pausa entre acciones
+                await asyncio.sleep(0.4)  # Pause between actions
 
         except Exception as api_error:
-            logger.error(f"Error en la API de Anthropic: {str(api_error)}")
+            logger.error(f"Error in Anthropic API: {str(api_error)}")
             yield {
                 "type": "error",
-                "content": f"Error al comunicarse con la API de Anthropic: {str(api_error)}"
+                "content": f"Error communicating with Anthropic API: {str(api_error)}"
             }
 
     async def handle_action(self, action: Dict, context_id: str | None = None) -> Dict:
-        """Maneja una acción específica y retorna la respuesta apropiada."""
+        """Handles a specific action and returns the appropriate response."""
         action_type = action.get("type")
         
         if action_type == "message":

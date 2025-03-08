@@ -6,7 +6,7 @@ from datetime import datetime
 import uuid
 from connection_manager import ConnectionManager
 
-# Configurar logging
+# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ async def handle_websocket_connection(
                     if not path:
                         raise ValueError("No path provided for file")
                     
-                    # Guardar el archivo en el chat
+                    # Save the file in the chat
                     manager.chat_manager.add_virtual_file_to_chat(
                         wallet_address,
                         current_chat_id,
@@ -78,7 +78,7 @@ async def handle_websocket_connection(
                         message_data.get("language", "solidity")
                     )
                     
-                    # Enviar confirmación al cliente
+                    # Send confirmation to the client
                     await manager.send_message(
                         json.dumps({
                             "type": "file_saved",
@@ -109,7 +109,7 @@ async def handle_websocket_connection(
                     if not path:
                         raise ValueError("No path provided for file")
                     
-                    # Obtener la versión del archivo
+                    # Get the file version
                     file_data = manager.chat_manager.get_virtual_file_from_chat(
                         wallet_address,
                         current_chat_id,
@@ -151,7 +151,7 @@ async def handle_websocket_connection(
                     )
                     continue
 
-            # Crear un nuevo mensaje en el chat
+            # Create a new message in the chat
             if current_chat_id:
                 manager.chat_manager.add_message_to_chat(
                     wallet_address,
@@ -168,7 +168,7 @@ async def handle_websocket_connection(
             if message_data.get("suppress_response", False):
                 continue
 
-            # Procesar el mensaje con el agente
+            # Process the message with the agent
             agent = manager.agents[wallet_address]
             response_generator = agent.process_message(content, context, current_chat_id)
             
@@ -187,7 +187,7 @@ async def handle_websocket_connection(
                         }
                     )
                     
-                    # Si es un mensaje de tipo file_create o code_edit, guardar el archivo en el chat
+                    # If it's a file_create or code_edit message type, save the file in the chat
                     if response["type"] in ["file_create", "code_edit"] and response.get("metadata", {}).get("path"):
                         manager.chat_manager.add_virtual_file_to_chat(
                             wallet_address,
