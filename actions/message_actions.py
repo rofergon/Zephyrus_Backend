@@ -101,6 +101,7 @@ CRITICAL RULES FOR SMART CONTRACT DEVELOPMENT:
    - Follow Solidity style guide
    - ALWAYS include a view function named 'owner' that returns the address of the contract owner
    - ALWAYS implement OpenZeppelin's AccessControl for permission management
+   - ALWAYS include a grantAdminRole function that allows assigning admin privileges to other addresses
 
 4. DAO Construction:
    - When implementing a DAO, ALWAYS use the following OpenZeppelin components:
