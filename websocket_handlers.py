@@ -59,6 +59,43 @@ async def handle_websocket_connection(
             
             logger.debug(f"Received message - Type: {message_type}, Chat ID: {current_chat_id}, Wallet: {wallet_address}")
 
+            # Handle chat history synchronization
+            if message_type == "sync_chat_history":
+                try:
+                    history = message_data.get("history")
+                    if not history or not current_chat_id:
+                        raise ValueError("Missing chat history or chat_id")
+                    
+                    # Sync the chat history
+                    manager.chat_manager.sync_chat_history(
+                        wallet_address,
+                        current_chat_id,
+                        history
+                    )
+                    
+                    # Send confirmation to the client
+                    await manager.send_message(
+                        json.dumps({
+                            "type": "chat_synced",
+                            "content": f"Chat history synced successfully for chat: {current_chat_id}",
+                            "metadata": {
+                                "chat_id": current_chat_id
+                            }
+                        }),
+                        wallet_address
+                    )
+                    continue
+                except Exception as e:
+                    logger.error(f"Error syncing chat history: {str(e)}")
+                    await manager.send_message(
+                        json.dumps({
+                            "type": "error",
+                            "content": f"Error syncing chat history: {str(e)}"
+                        }),
+                        wallet_address
+                    )
+                    continue
+
             # Skip processing for contexts_synced messages
             if message_type == "contexts_synced":
                 continue

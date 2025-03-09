@@ -107,64 +107,34 @@ class Chat:
         return []
 
 class ChatManager:
-    def __init__(self, base_path: str = "./chats"):
-        self.base_path = base_path
+    def __init__(self):
         self.chats = {}  # wallet_address -> {chat_id -> Chat}
-        self._ensure_base_path()
-        self._load_chats()
-
-    def _ensure_base_path(self):
-        if not os.path.exists(self.base_path):
-            os.makedirs(self.base_path)
-
-    def _get_chat_path(self, wallet_address: str, chat_id: str) -> str:
-        wallet_dir = os.path.join(self.base_path, wallet_address)
-        if not os.path.exists(wallet_dir):
-            os.makedirs(wallet_dir)
-        return os.path.join(wallet_dir, f"{chat_id}.json")
-
-    def _load_chats(self):
-        if not os.path.exists(self.base_path):
-            return
-
-        for wallet_dir in os.listdir(self.base_path):
-            wallet_path = os.path.join(self.base_path, wallet_dir)
-            if os.path.isdir(wallet_path):
-                self.chats[wallet_dir] = {}
-                for chat_file in os.listdir(wallet_path):
-                    if chat_file.endswith(".json"):
-                        chat_path = os.path.join(wallet_path, chat_file)
-                        try:
-                            with open(chat_path, 'r', encoding='utf-8') as f:
-                                data = json.load(f)
-                                chat = Chat(
-                                    data["id"],
-                                    data["name"],
-                                    data["wallet_address"]
-                                )
-                                chat.created_at = data["created_at"]
-                                chat.last_accessed = data["last_accessed"]
-                                chat.messages = data.get("messages", [])
-                                chat.active_files = data.get("virtualFiles", {})  # Nuevo: cargar archivos virtuales
-                                self.chats[wallet_dir][chat.chat_id] = chat
-                        except Exception as e:
-                            logger.error(f"Error loading chat {chat_file}: {str(e)}")
 
     def create_chat(self, wallet_address: str, chat_id: str, name: str = None) -> Chat:
-        """Crea un chat con el ID proporcionado por el frontend."""
+        """Crea un chat temporal con el ID proporcionado por el frontend."""
         if wallet_address not in self.chats:
             self.chats[wallet_address] = {}
             
         if chat_id in self.chats.get(wallet_address, {}):
-            # Si ya existe un chat con ese ID, devuélvelo
             return self.chats[wallet_address][chat_id]
             
         chat_name = name or f"Chat {len(self.chats[wallet_address]) + 1}"
         chat = Chat(chat_id, chat_name, wallet_address)
         
         self.chats[wallet_address][chat_id] = chat
-        self._save_chat(chat)
         return chat
+
+    def sync_chat_history(self, wallet_address: str, chat_id: str, history: dict) -> None:
+        """Sincroniza el historial del chat desde el frontend."""
+        if not self.get_chat(wallet_address, chat_id):
+            self.create_chat(wallet_address, chat_id, history.get("name"))
+        
+        chat = self.get_chat(wallet_address, chat_id)
+        if chat:
+            chat.messages = history.get("messages", [])
+            chat.active_files = history.get("virtualFiles", {})
+            chat.created_at = history.get("created_at", datetime.now().isoformat())
+            chat.last_accessed = history.get("last_accessed", datetime.now().isoformat())
 
     def get_user_chats(self, wallet_address: str) -> list:
         return [chat.to_dict() for chat in self.chats.get(wallet_address, {}).values()]
@@ -176,7 +146,6 @@ class ChatManager:
         chat = self.get_chat(wallet_address, chat_id)
         if chat:
             chat.add_message(message)
-            self._save_chat(chat)
         else:
             raise ValueError(f"Chat {chat_id} not found for wallet {wallet_address}")
 
@@ -185,15 +154,14 @@ class ChatManager:
         chat = self.get_chat(wallet_address, chat_id)
         if chat:
             chat.add_virtual_file(path, content, language)
-            self._save_chat(chat)
         else:
             raise ValueError(f"Chat {chat_id} not found for wallet {wallet_address}")
 
-    def get_virtual_file_from_chat(self, wallet_address: str, chat_id: str, path: str) -> dict | None:
+    def get_virtual_file_from_chat(self, wallet_address: str, chat_id: str, path: str, version: int = None) -> dict | None:
         """Obtiene un archivo virtual de un chat específico."""
         chat = self.get_chat(wallet_address, chat_id)
         if chat:
-            return chat.get_virtual_file(path)
+            return chat.get_virtual_file(path, version)
         return None
 
     def delete_virtual_file_from_chat(self, wallet_address: str, chat_id: str, path: str) -> None:
@@ -201,38 +169,14 @@ class ChatManager:
         chat = self.get_chat(wallet_address, chat_id)
         if chat:
             chat.delete_virtual_file(path)
-            self._save_chat(chat)
         else:
             raise ValueError(f"Chat {chat_id} not found for wallet {wallet_address}")
 
-    def _save_chat(self, chat: Chat):
-        try:
-            chat_path = self._get_chat_path(chat.wallet_address, chat.chat_id)
-            with open(chat_path, 'w', encoding='utf-8') as f:
-                json.dump(chat.to_dict(), f, indent=2, ensure_ascii=False)
-        except Exception as e:
-            logger.error(f"Error saving chat {chat.chat_id}: {str(e)}")
-
     def delete_chat(self, wallet_address: str, chat_id: str) -> None:
         """Elimina un chat específico."""
-        try:
-            chat = self.get_chat(wallet_address, chat_id)
-            if not chat:
-                raise ValueError(f"Chat {chat_id} not found for wallet {wallet_address}")
-            
-            # Eliminar el archivo del chat
-            chat_path = self._get_chat_path(wallet_address, chat_id)
-            if os.path.exists(chat_path):
-                os.remove(chat_path)
-            
-            # Eliminar de la memoria
-            if wallet_address in self.chats and chat_id in self.chats[wallet_address]:
-                del self.chats[wallet_address][chat_id]
-            
+        if wallet_address in self.chats and chat_id in self.chats[wallet_address]:
+            del self.chats[wallet_address][chat_id]
             logger.info(f"Deleted chat {chat_id} for wallet {wallet_address}")
-        except Exception as e:
-            logger.error(f"Error deleting chat {chat_id}: {str(e)}")
-            raise
 
     def get_chat_by_id(self, chat_id: str) -> Chat | None:
         """Obtiene un chat por su ID, independientemente del wallet_address."""
