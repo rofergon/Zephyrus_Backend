@@ -3,7 +3,7 @@ import os
 from datetime import datetime
 import uuid
 import logging
-from typing import List
+from typing import List, Dict, Optional
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -16,8 +16,8 @@ class Chat:
         self.created_at = datetime.now().isoformat()
         self.last_accessed = datetime.now().isoformat()
         self.messages = []
-        self.active_files = {}  # {base_name: {content, language, timestamp}}
-        self.file_history = {}  # {base_name: [{content, timestamp}]}
+        self.virtual_files = {}  # {base_name: {content, language, timestamp}}
+        self.virtual_file_history = {}  # {base_name: [{content, timestamp}]}
         logger.info(f"Created new chat: {chat_id} for wallet: {wallet_address}")
 
     def to_dict(self) -> dict:
@@ -32,7 +32,7 @@ class Chat:
             "type": "chat",
             "virtualFiles": {
                 f"contracts/{name}": file_data 
-                for name, file_data in self.active_files.items()
+                for name, file_data in self.virtual_files.items()
             }
         }
 
@@ -49,22 +49,22 @@ class Chat:
         base_name = base_name.split("_")[0] + ".sol"
         
         # Si el contenido es diferente al actual, crear nueva versión
-        if base_name in self.active_files:
-            current = self.active_files[base_name]
+        if base_name in self.virtual_files:
+            current = self.virtual_files[base_name]
             if content != current["content"]:
                 # Guardar versión anterior en el historial
-                if base_name not in self.file_history:
-                    self.file_history[base_name] = []
-                self.file_history[base_name].append({
+                if base_name not in self.virtual_file_history:
+                    self.virtual_file_history[base_name] = []
+                self.virtual_file_history[base_name].append({
                     "content": current["content"],
                     "timestamp": current["timestamp"]
                 })
                 # Mantener solo las últimas 5 versiones en el historial
-                if len(self.file_history[base_name]) > 5:
-                    self.file_history[base_name] = self.file_history[base_name][-5:]
+                if len(self.virtual_file_history[base_name]) > 5:
+                    self.virtual_file_history[base_name] = self.virtual_file_history[base_name][-5:]
         
         # Actualizar archivo activo
-        self.active_files[base_name] = {
+        self.virtual_files[base_name] = {
             "content": content,
             "language": language,
             "timestamp": current_time
@@ -78,13 +78,13 @@ class Chat:
         
         if version is None:
             # Retornar versión activa
-            if base_name in self.active_files:
-                return self.active_files[base_name]
+            if base_name in self.virtual_files:
+                return self.virtual_files[base_name]
             return None
             
         # Retornar versión específica del historial
-        if base_name in self.file_history:
-            history = self.file_history[base_name]
+        if base_name in self.virtual_file_history:
+            history = self.virtual_file_history[base_name]
             if 0 <= version < len(history):
                 return history[version]
         
@@ -93,17 +93,17 @@ class Chat:
     def delete_virtual_file(self, path: str) -> None:
         """Elimina un archivo virtual del chat."""
         base_name = os.path.basename(path).replace(".sol", "").split("_")[0] + ".sol"
-        if base_name in self.active_files:
-            del self.active_files[base_name]
-            if base_name in self.file_history:
-                del self.file_history[base_name]
+        if base_name in self.virtual_files:
+            del self.virtual_files[base_name]
+            if base_name in self.virtual_file_history:
+                del self.virtual_file_history[base_name]
         self.last_accessed = datetime.now().isoformat()
 
     def get_file_history(self, path: str) -> List[dict]:
         """Obtiene el historial de versiones de un archivo."""
         base_name = os.path.basename(path).replace(".sol", "").split("_")[0] + ".sol"
-        if base_name in self.file_history:
-            return self.file_history[base_name]
+        if base_name in self.virtual_file_history:
+            return self.virtual_file_history[base_name]
         return []
 
 class ChatManager:
@@ -131,8 +131,37 @@ class ChatManager:
         
         chat = self.get_chat(wallet_address, chat_id)
         if chat:
-            chat.messages = history.get("messages", [])
-            chat.active_files = history.get("virtualFiles", {})
+            # Verify and format messages
+            formatted_messages = []
+            if "messages" in history and isinstance(history["messages"], list):
+                for msg in history["messages"]:
+                    if isinstance(msg, dict) and "text" in msg and "sender" in msg:
+                        # Ensure timestamp exists
+                        if "timestamp" not in msg:
+                            msg["timestamp"] = datetime.now().isoformat()
+                        formatted_messages.append(msg)
+            
+            chat.messages = formatted_messages
+            
+            # Verify and format virtual files
+            if "virtualFiles" in history and isinstance(history["virtualFiles"], dict):
+                # Process and validate each file
+                validated_files = {}
+                for path, file_data in history["virtualFiles"].items():
+                    if isinstance(file_data, dict) and "content" in file_data:
+                        # Extract file name from path
+                        base_name = os.path.basename(path)
+                        # Ensure all required fields exist
+                        validated_file = {
+                            "content": str(file_data["content"]),
+                            "language": file_data.get("language", "solidity"),
+                            "timestamp": file_data.get("timestamp", datetime.now().timestamp() * 1000)
+                        }
+                        validated_files[base_name] = validated_file
+                
+                chat.virtual_files = validated_files
+            
+            # Update timestamps
             chat.created_at = history.get("created_at", datetime.now().isoformat())
             chat.last_accessed = history.get("last_accessed", datetime.now().isoformat())
 
@@ -183,4 +212,33 @@ class ChatManager:
         for wallet_chats in self.chats.values():
             if chat_id in wallet_chats:
                 return wallet_chats[chat_id]
-        return None 
+        return None
+
+    def clean_user_cache(self, wallet_address: str) -> None:
+        """
+        Limpia la caché y recursos asociados a un usuario específico.
+        Esta función se llama cuando un usuario se desconecta para evitar problemas al reconectarse.
+        
+        Args:
+            wallet_address (str): La dirección de wallet del usuario
+        """
+        # Obtener todos los chats del usuario
+        user_chats = self.get_user_chats(wallet_address)
+        
+        # Para cada chat, limpiar los recursos en memoria
+        for chat_info in user_chats:
+            if chat_id := chat_info.get('id'):
+                chat = self.get_chat(wallet_address, chat_id)
+                if chat:
+                    # Limpiar archivos virtuales en memoria
+                    chat.virtual_files = {}
+                    chat.virtual_file_history = {}
+                    
+                    # Mantener los mensajes, pero marcar el chat como "limpio"
+                    if not hasattr(chat, 'metadata'):
+                        chat.metadata = {}
+                    chat.metadata['last_cleaned'] = datetime.now().isoformat()
+                    chat.metadata['connection_state'] = 'disconnected'
+        
+        # Registrar la limpieza
+        logging.info(f"Cache limpiada para el usuario {wallet_address}") 

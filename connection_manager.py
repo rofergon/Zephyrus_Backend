@@ -31,8 +31,21 @@ class ConnectionManager:
         if wallet_address in self.active_connections:
             del self.active_connections[wallet_address]
         if wallet_address in self.agents:
+            # Limpiar cualquier estado del agente antes de eliminarlo
+            agent = self.agents[wallet_address]
+            # Limpiar referencias a acciones que podrían tener estado
+            agent.edit_actions = None
+            agent.compilation_actions = None
+            agent.message_actions = None
+            # Eliminar el agente
             del self.agents[wallet_address]
-        logger.info(f"Wallet {wallet_address} disconnected")
+            
+        # Limpiar cualquier caché o estado temporal relacionado con el usuario
+        if hasattr(self, 'chat_manager') and self.chat_manager:
+            # Llamar al nuevo método de limpieza de caché para este usuario
+            self.chat_manager.clean_user_cache(wallet_address)
+            
+        logger.info(f"Wallet {wallet_address} disconnected and cache cleaned")
 
     async def send_message(self, message: str, wallet_address: str):
         if wallet_address in self.active_connections:

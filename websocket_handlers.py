@@ -60,11 +60,21 @@ async def handle_websocket_connection(
             logger.debug(f"Received message - Type: {message_type}, Chat ID: {current_chat_id}, Wallet: {wallet_address}")
 
             # Handle chat history synchronization
-            if message_type == "sync_chat_history":
+            if message_type == "sync_chat_history" or message_type == "full_history_sync":
                 try:
                     history = message_data.get("history")
                     if not history or not current_chat_id:
                         raise ValueError("Missing chat history or chat_id")
+                    
+                    logger.info(f"Syncing chat history for chat {current_chat_id}")
+                    
+                    # For full history sync, we'll replace everything
+                    if message_type == "full_history_sync":
+                        # First delete the existing chat if it exists
+                        existing_chat = manager.chat_manager.get_chat(wallet_address, current_chat_id)
+                        if existing_chat:
+                            manager.chat_manager.delete_chat(wallet_address, current_chat_id)
+                        logger.info(f"Performing full history replacement for chat {current_chat_id}")
                     
                     # Sync the chat history
                     manager.chat_manager.sync_chat_history(
@@ -79,7 +89,8 @@ async def handle_websocket_connection(
                             "type": "chat_synced",
                             "content": f"Chat history synced successfully for chat: {current_chat_id}",
                             "metadata": {
-                                "chat_id": current_chat_id
+                                "chat_id": current_chat_id,
+                                "sync_type": message_type
                             }
                         }),
                         wallet_address
@@ -188,58 +199,58 @@ async def handle_websocket_connection(
                     )
                     continue
 
-            # Create a new message in the chat
-            if current_chat_id:
-                manager.chat_manager.add_message_to_chat(
-                    wallet_address,
-                    current_chat_id,
-                    {
-                        "id": str(uuid.uuid4()),
-                        "text": content,
-                        "sender": "user",
-                        "timestamp": datetime.now().timestamp() * 1000
-                    }
-                )
+            # Process message
+            if message_type == "message":
+                # Create or get chat if not exists
+                if current_chat_id and not manager.chat_manager.get_chat(wallet_address, current_chat_id):
+                    logger.info(f"Creating new chat for message - ID: {current_chat_id}")
+                    manager.chat_manager.create_chat(wallet_address, current_chat_id)
+                
+                # Message format validation
+                try:
+                    validated_content = content
+                    # If content is JSON string, parse it
+                    if isinstance(content, str) and (content.startswith('{') or content.startswith('[')):
+                        try:
+                            parsed_content = json.loads(content)
+                            if isinstance(parsed_content, dict) and "text" in parsed_content:
+                                validated_content = parsed_content["text"]
+                        except json.JSONDecodeError:
+                            # Not JSON, use as is
+                            pass
+                    
+                    # Process the message
+                    agent = manager.agents.get(wallet_address)
+                    if agent:
+                        async for response in agent.process_message(validated_content, context, current_chat_id, wallet_address):
+                            # Add wallet_address to response for tracking
+                            if "wallet_address" not in response:
+                                response["wallet_address"] = wallet_address
+                            await manager.send_message(json.dumps(response), wallet_address)
+                    else:
+                        logger.error(f"No agent found for wallet {wallet_address}")
+                        await manager.send_message(
+                            json.dumps({
+                                "type": "error",
+                                "content": "Agent initialization failed",
+                                "wallet_address": wallet_address
+                            }),
+                            wallet_address
+                        )
+                except Exception as e:
+                    logger.error(f"Error processing message: {str(e)}")
+                    await manager.send_message(
+                        json.dumps({
+                            "type": "error",
+                            "content": f"Error processing message: {str(e)}"
+                        }),
+                        wallet_address
+                    )
 
             # Check if response should be suppressed
             if message_data.get("suppress_response", False):
                 continue
 
-            # Process the message with the agent
-            agent = manager.agents[wallet_address]
-            response_generator = agent.process_message(content, context, current_chat_id)
-            
-            async for response in response_generator:
-                if current_chat_id:
-                    # Save AI response to chat
-                    manager.chat_manager.add_message_to_chat(
-                        wallet_address,
-                        current_chat_id,
-                        {
-                            "id": str(uuid.uuid4()),
-                            "text": response["content"],
-                            "sender": "ai",
-                            "timestamp": datetime.now().timestamp() * 1000,
-                            "type": response["type"]
-                        }
-                    )
-                    
-                    # If it's a file_create or code_edit message type, save the file in the chat
-                    if response["type"] in ["file_create", "code_edit"] and response.get("metadata", {}).get("path"):
-                        manager.chat_manager.add_virtual_file_to_chat(
-                            wallet_address,
-                            current_chat_id,
-                            response["metadata"]["path"],
-                            response["content"],
-                            response["metadata"].get("language", "solidity")
-                        )
-                
-                # Send response to client
-                await manager.send_message(
-                    json.dumps(response),
-                    wallet_address
-                )
-                
         except json.JSONDecodeError:
             logger.error(f"Invalid JSON received: {data}")
             await manager.send_message(
@@ -251,10 +262,12 @@ async def handle_websocket_connection(
             )
 
         except WebSocketDisconnect:
+            logger.info(f"WebSocket disconnected for wallet {wallet_address}")
             manager.disconnect(wallet_address)
             break
 
         except Exception as e:
             logger.error(f"Error in websocket connection: {str(e)}")
+            # Asegurar que se limpie la conexión incluso en caso de error
             manager.disconnect(wallet_address)
             break 
