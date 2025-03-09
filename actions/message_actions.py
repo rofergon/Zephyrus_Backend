@@ -94,7 +94,7 @@ CRITICAL RULES FOR SMART CONTRACT DEVELOPMENT:
    - Include all necessary imports and dependencies
    - Ensure proper integration with existing functions and state variables
    - Never use // for comments, use /* */ instead
-   - cuando vayas a explicar el codigo o el constructor con expresiones como new MyToken("My Token", "MTK", 6, 1000000) esta siempre deber ir enel formato **new MyToken("My Token", "MTK", 6, 1000000)**
+   - cuando vayas a explicar el codigo o el constructor con expresiones como new MyToken("My Token", "MTK", 6, 1000000) esta siempre deber ir enel formato **new MyToken("My Token", "MTK", 6, 1000000)** usando ** para empezar y ** para terminar 
 3. Code Structure:
    - ALWAYS provide the complete contract code with all the changes applied
    - Maintain consistent formatting
