@@ -139,3 +139,69 @@ class EditActions:
             self.active_contract["is_complete"] = True
         if file_system is not None:
             self.current_contract_context["file_system"] = file_system  
+
+    def handle_edit_action(self, action: Dict) -> Dict:
+        """
+        Maneja acciones de edición y creación de archivos.
+        
+        Args:
+            action (Dict): La acción a manejar que puede ser de tipo 'edit', 'edit_file', 'create_file' o 'file_create'
+            
+        Returns:
+            Dict: Resultado de la acción con path, content y/o error
+        """
+        try:
+            action_type = action.get("type", "")
+            
+            # Normalizar el tipo de acción
+            if action_type in ["edit", "edit_file"]:
+                normalized_type = "edit"
+            elif action_type in ["create_file", "file_create"]:
+                normalized_type = "create_file"
+            else:
+                return {"error": f"Unsupported action type: {action_type}"}
+            
+            path = action.get("path")
+            if not path:
+                return {"error": "No path specified for file action"}
+            
+            # Para edición de archivos
+            if normalized_type == "edit":
+                edit_data = action.get("edit")
+                if not edit_data:
+                    return {"error": "No edit data provided"}
+                
+                current_content = self.active_contract.get("content", "")
+                new_content = self.apply_edit(current_content, edit_data)
+                
+                # Actualizar el contenido del contrato activo
+                self.active_contract["content"] = new_content
+                self.active_contract["path"] = path
+                self.active_contract["is_complete"] = True
+                
+                return {
+                    "path": path,
+                    "content": new_content,
+                    "language": "solidity"
+                }
+            
+            # Para creación de archivos
+            elif normalized_type == "create_file":
+                content = action.get("content")
+                if not content:
+                    return {"error": "No content provided for file creation"}
+                
+                # Actualizar el contrato activo
+                self.active_contract["content"] = content
+                self.active_contract["path"] = path
+                self.active_contract["is_complete"] = True
+                
+                return {
+                    "path": path,
+                    "content": content,
+                    "language": "solidity"
+                }
+            
+        except Exception as e:
+            logger.error(f"Error handling edit action: {str(e)}")
+            return {"error": f"Error handling edit action: {str(e)}"}  

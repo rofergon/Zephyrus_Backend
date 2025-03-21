@@ -1,7 +1,7 @@
 import logging
 from typing import Dict, List, AsyncGenerator
 import asyncio
-import uuid
+
 from datetime import datetime
 from session_manager import ChatManager
 
@@ -107,7 +107,7 @@ class MessageActions:
                     model="claude-3-5-sonnet-20241022",
                     max_tokens=8096,  # Increased to allow more complete responses
                     temperature=0.3,  # Reduced for more consistent and precise responses
-                    system="""You are an AI assistant specialized in Solidity smart contract development using OpenZeppelin v5.2.0.
+                    system="""You are an AI assistant specialized in Solidity smart contract development using OpenZeppelin v5.2.0 and solidity 0.8.24
 Your primary role is to write, edit, and debug smart contracts with a focus on security and best practices.""",
                     messages=formatted_history,
                     stop_sequences=["\```"]  # Stop after code blocks
@@ -166,7 +166,7 @@ Your primary role is to write, edit, and debug smart contracts with a focus on s
         """Handles a specific action and returns a response."""
         action_type = action.get("type")
         try:
-            if action_type == "edit" or action_type == "file_create":
+            if action_type == "edit" or action_type == "edit_file" or action_type == "create_file" or action_type == "file_create":
                 # Process file edits and creation
                 result = self.edit_actions.handle_edit_action(action)
                 if "error" in result:
@@ -178,7 +178,7 @@ Your primary role is to write, edit, and debug smart contracts with a focus on s
                     }
                 
                 # Success - format the response based on the action type
-                if action_type == "edit":
+                if action_type == "edit" or action_type == "edit_file":
                     response = {
                         "type": "code_edit",
                         "content": result["content"],
@@ -188,7 +188,7 @@ Your primary role is to write, edit, and debug smart contracts with a focus on s
                         },
                         "wallet_address": wallet_address
                     }
-                else:  # file_create
+                else:  # create_file or file_create
                     response = {
                         "type": "file_create",
                         "content": result["content"],
